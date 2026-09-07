@@ -628,6 +628,7 @@ export function createObjectMesh(defId: string): THREE.Group {
       const tireMat = getMaterial('#1e293b');
       // Wheels touch ground y = 0 (radius = 0.28, center at y = 0.28)
       const wheelGeo = new THREE.TorusGeometry(0.28, 0.05, 6, 12);
+      wheelGeo.rotateY(Math.PI / 2);
       const wheelF = new THREE.Mesh(wheelGeo, tireMat);
       wheelF.position.set(0, 0.28, 0.5);
       const wheelB = new THREE.Mesh(wheelGeo, tireMat);
@@ -638,6 +639,13 @@ export function createObjectMesh(defId: string): THREE.Group {
       bar.position.set(0, 0.45, 0);
       bar.rotation.x = 0.15;
       group.add(bar);
+      // Handlebars
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.25, 6), frameMat);
+      stem.position.set(0, 0.55, 0.45);
+      const handlebar = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.42, 6), frameMat);
+      handlebar.rotation.z = Math.PI / 2;
+      handlebar.position.set(0, 0.68, 0.45);
+      group.add(stem, handlebar);
       break;
     }
     case 'street_lamp': {
