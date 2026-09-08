@@ -1,5 +1,4 @@
 import React, { useEffect } from 'react';
-import confetti from 'canvas-confetti';
 import { Trophy, ArrowRight, RotateCcw, Sparkles, BookOpen, Clock, Target } from 'lucide-react';
 import { GameStats } from '../types';
 import { formatBallSize } from '../utils/formatters';
@@ -20,15 +19,23 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   const isNewRecord = stats.ballDiameter >= stats.highScoreDiameter && stats.ballDiameter > 1.3;
 
   useEffect(() => {
-    // Fire festive confetti if new record or victory
-    if (isNewRecord || stats.isVictory) {
-      confetti({
-        particleCount: 120,
-        spread: 80,
-        origin: { y: 0.6 },
-        colors: ['#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6'],
-      });
-    }
+    // Fire festive confetti if new record or victory. Lazy-loaded off the
+    // initial bundle since it is only ever needed on this screen.
+    if (!isNewRecord && !stats.isVictory) return;
+    let cancelled = false;
+    import('canvas-confetti').then(({ default: confetti }) => {
+      if (!cancelled) {
+        confetti({
+          particleCount: 120,
+          spread: 80,
+          origin: { y: 0.6 },
+          colors: ['#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6'],
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [isNewRecord, stats.isVictory]);
 
   // Biome counts
