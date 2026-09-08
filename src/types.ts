@@ -35,6 +35,12 @@ export interface PlacedObject {
   animPhase?: number;
   isScared?: boolean;
   scaredTimer?: number;
+  // Amortized ground-query cache for dynamic entities: the last terrain
+  // raycast's height + face normal are reused until the entity has traveled
+  // ENTITY_GROUND_REFRESH_DIST meters (see updateDynamicEntities)
+  cachedGroundHeight?: number;
+  cachedGroundNormal?: { x: number; y: number; z: number };
+  groundDistSinceQuery?: number;
 }
 
 export interface StuckObjectInfo {

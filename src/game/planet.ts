@@ -1,5 +1,14 @@
 import * as THREE from 'three';
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh';
 import { BiomeType } from '../types';
+
+// Wire up three-mesh-bvh: geometries with a boundsTree get BVH-accelerated
+// raycasts (O(log n) traversal instead of a full triangle sweep), and a
+// raycaster with firstHitOnly = true stops at the closest hit. Meshes without
+// a boundsTree fall back to the stock three.js raycast untouched.
+THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+THREE.Mesh.prototype.raycast = acceleratedRaycast;
 
 export interface PlanetData {
   planetGroup: THREE.Group;
@@ -104,6 +113,9 @@ export function createPlanet(radius: number = 60, seed: number = 1): PlanetData 
 
   nonIndexed.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   nonIndexed.computeVertexNormals();
+
+  // Build the BVH used by the per-frame ground raycasts in stickyBallGame
+  nonIndexed.computeBoundsTree();
 
   const terrainMat = new THREE.MeshStandardMaterial({
     vertexColors: true,

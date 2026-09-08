@@ -12,6 +12,15 @@ export interface StickyBallGameCallbacks {
   onBiomeChange: (biome: BiomeType) => void;
 }
 
+/**
+ * Distance (meters) a dynamic entity travels along the surface before its cached
+ * ground height / face normal is refreshed with a fresh terrain raycast. Facets
+ * are ~7.5m wide and nearly flat, so a 0.5m refresh keeps vertical drift to a
+ * few centimeters — imperceptible next to the walk-cycle bob — while cutting
+ * per-frame entity raycasts by ~20x.
+ */
+const ENTITY_GROUND_REFRESH_DIST = 0.5;
+
 export class StickyBallGame {
   private container: HTMLElement;
   private scene: THREE.Scene;
@@ -59,6 +68,12 @@ export class StickyBallGame {
   private tractionIndex: number = 0;
   private tractionLifetimes: Float32Array = new Float32Array(50);
 
+  // Scratch objects for updateDynamicEntities (avoid per-entity allocations)
+  private entUp: THREE.Vector3 = new THREE.Vector3();
+  private entFwd: THREE.Vector3 = new THREE.Vector3();
+  private entRight: THREE.Vector3 = new THREE.Vector3();
+  private entBasis: THREE.Matrix4 = new THREE.Matrix4();
+
   // Camera settings
   private cameraOffset: THREE.Vector3 = new THREE.Vector3();
   private cameraTarget: THREE.Vector3 = new THREE.Vector3();
@@ -91,6 +106,10 @@ export class StickyBallGame {
   constructor(container: HTMLElement, callbacks: StickyBallGameCallbacks) {
     this.container = container;
     this.callbacks = callbacks;
+
+    // Only the closest terrain hit is ever used; with the terrain BVH (built in
+    // planet.ts) this lets the traversal terminate at the first hit found
+    this.groundRaycaster.firstHitOnly = true;
 
     // Load high score from localStorage
     const saved = localStorage.getItem('stickyroll_highscore_diameter');
@@ -396,6 +415,7 @@ export class StickyBallGame {
     root.traverse((child) => {
       const mesh = child as THREE.Mesh;
       if (mesh.geometry) {
+        mesh.geometry.disposeBoundsTree();
         mesh.geometry.dispose();
       }
       const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
@@ -528,6 +548,9 @@ export class StickyBallGame {
       animPhase: Math.random() * Math.PI * 2,
       isScared: false,
       scaredTimer: 0,
+      cachedGroundHeight: ground.position.length(),
+      cachedGroundNormal: { x: ground.normal.x, y: ground.normal.y, z: ground.normal.z },
+      groundDistSinceQuery: 0,
     });
   }
 
@@ -1074,29 +1097,45 @@ export class StickyBallGame {
       const currentSpeed = obj.isScared ? baseSpeed * 2.2 : baseSpeed;
 
       // Move along spherical planet surface
-      const angularDist = (currentSpeed * delta) / this.planetRadius;
+      const moveDist = currentSpeed * delta;
+      const angularDist = moveDist / this.planetRadius;
       const moveAxis = new THREE.Vector3().crossVectors(tempNormal, tempHeading).normalize();
       const moveQuat = new THREE.Quaternion().setFromAxisAngle(moveAxis, angularDist);
 
       tempPos.applyQuaternion(moveQuat);
       tempHeading.applyQuaternion(moveQuat);
 
-      // Snap to exact ground terrain with slight 0.02 embed so feet are firmly planted
-      const ground = this.getGroundIntersection(tempPos);
-      const finalPos = ground.position.clone().sub(ground.normal.clone().multiplyScalar(0.02));
+      // Ground snap with an amortized terrain query: the faceted surface is
+      // piecewise-flat, so the last raycast's height + face normal stay valid
+      // until the creature has traveled ENTITY_GROUND_REFRESH_DIST meters.
+      // Refreshes only then instead of raycasting every frame per creature.
+      obj.groundDistSinceQuery = (obj.groundDistSinceQuery || 0) + moveDist;
+      if (obj.cachedGroundHeight === undefined || obj.groundDistSinceQuery >= ENTITY_GROUND_REFRESH_DIST) {
+        obj.groundDistSinceQuery = 0;
+        const ground = this.getGroundIntersection(tempPos);
+        obj.cachedGroundHeight = ground.position.length();
+        obj.cachedGroundNormal = { x: ground.normal.x, y: ground.normal.y, z: ground.normal.z };
+      }
+      const groundHeight = obj.cachedGroundHeight ?? this.planetRadius;
+      const cachedNormal = obj.cachedGroundNormal!;
 
-      mesh.position.copy(finalPos);
+      // Firmly plant feet: cached surface height with slight 0.02 embed along the ground normal
+      const upVec = this.entUp.set(cachedNormal.x, cachedNormal.y, cachedNormal.z);
+      tempPos.normalize().multiplyScalar(groundHeight).addScaledVector(upVec, -0.02);
+      mesh.position.copy(tempPos);
 
-      // Orient mesh: Up along ground.normal, Forward along tempHeading
-      const upVec = ground.normal;
-      const forwardVec = tempHeading.clone().sub(upVec.clone().multiplyScalar(tempHeading.dot(upVec))).normalize();
-      const rightVec = new THREE.Vector3().crossVectors(upVec, forwardVec).normalize();
-      const rotMatrix = new THREE.Matrix4().makeBasis(rightVec, upVec, forwardVec);
-      mesh.quaternion.setFromRotationMatrix(rotMatrix);
+      // Orient mesh: Up along ground normal, Forward along tempHeading
+      const forwardVec = this.entFwd
+        .copy(tempHeading)
+        .addScaledVector(upVec, -tempHeading.dot(upVec))
+        .normalize();
+      const rightVec = this.entRight.crossVectors(upVec, forwardVec).normalize();
+      this.entBasis.makeBasis(rightVec, upVec, forwardVec);
+      mesh.quaternion.setFromRotationMatrix(this.entBasis);
 
       // Save updated state
-      obj.worldPos = { x: finalPos.x, y: finalPos.y, z: finalPos.z };
-      obj.normal = { x: ground.normal.x, y: ground.normal.y, z: ground.normal.z };
+      obj.worldPos = { x: tempPos.x, y: tempPos.y, z: tempPos.z };
+      obj.normal = { x: upVec.x, y: upVec.y, z: upVec.z };
       obj.heading = { x: forwardVec.x, y: forwardVec.y, z: forwardVec.z };
 
       // Procedural limb animation
