@@ -7,6 +7,10 @@ class SoundEngine {
   private rollOsc: OscillatorNode | null = null;
   private rollGain: GainNode | null = null;
   private rollFilter: BiquadFilterNode | null = null;
+  private noiseSource: AudioBufferSourceNode | null = null;
+  private noiseGain: GainNode | null = null;
+  private noiseFilter: BiquadFilterNode | null = null;
+  private noiseBuffer: AudioBuffer | null = null;
   private isRolling: boolean = false;
   private musicInterval: number | null = null;
   private musicStep: number = 0;
@@ -23,8 +27,10 @@ class SoundEngine {
 
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
-    if (this.isMuted && this.rollGain) {
-      this.rollGain.gain.setValueAtTime(0, this.ctx?.currentTime || 0);
+    if (this.isMuted && this.ctx) {
+      const t = this.ctx.currentTime;
+      if (this.rollGain) this.rollGain.gain.setValueAtTime(0, t);
+      if (this.noiseGain) this.noiseGain.gain.setValueAtTime(0, t);
     }
     return this.isMuted;
   }
@@ -176,13 +182,33 @@ class SoundEngine {
     }
   }
 
+  private getOrCreateNoiseBuffer(): AudioBuffer | null {
+    if (this.noiseBuffer) return this.noiseBuffer;
+    if (!this.ctx) return null;
+    const sampleRate = this.ctx.sampleRate;
+    const buffer = this.ctx.createBuffer(1, sampleRate, sampleRate);
+    const data = buffer.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < sampleRate; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      data[i] = (b0 + b1 + b2 + white * 0.05) * 0.75;
+    }
+    this.noiseBuffer = buffer;
+    return buffer;
+  }
+
   /**
-   * Update rolling sound speed
+   * Update rolling sound speed (Smooth Marble: warm sub-bass hum + soft friction)
    */
   public updateRolling(speed: number) {
     if (this.isMuted) {
-      if (this.rollGain && this.ctx) {
-        this.rollGain.gain.setValueAtTime(0, this.ctx.currentTime);
+      if (this.ctx) {
+        const t = this.ctx.currentTime;
+        if (this.rollGain) this.rollGain.gain.setValueAtTime(0, t);
+        if (this.noiseGain) this.noiseGain.gain.setValueAtTime(0, t);
       }
       return;
     }
@@ -192,35 +218,55 @@ class SoundEngine {
       if (!this.ctx) return;
 
       if (!this.rollOsc) {
+        const t = this.ctx.currentTime;
         this.rollOsc = this.ctx.createOscillator();
+        this.rollOsc.type = 'sine';
+        this.rollOsc.frequency.setValueAtTime(48, t);
+
         this.rollFilter = this.ctx.createBiquadFilter();
-        this.rollGain = this.ctx.createGain();
-
-        this.rollOsc.type = 'sawtooth';
-        this.rollOsc.frequency.setValueAtTime(45, this.ctx.currentTime);
-
         this.rollFilter.type = 'lowpass';
-        this.rollFilter.frequency.setValueAtTime(180, this.ctx.currentTime);
+        this.rollFilter.frequency.setValueAtTime(140, t);
 
-        this.rollGain.gain.setValueAtTime(0, this.ctx.currentTime);
+        this.rollGain = this.ctx.createGain();
+        this.rollGain.gain.setValueAtTime(0, t);
 
         this.rollOsc.connect(this.rollFilter);
         this.rollFilter.connect(this.rollGain);
         this.rollGain.connect(this.ctx.destination);
-
         this.rollOsc.start();
+
+        const buffer = this.getOrCreateNoiseBuffer();
+        if (buffer) {
+          this.noiseSource = this.ctx.createBufferSource();
+          this.noiseSource.buffer = buffer;
+          this.noiseSource.loop = true;
+          this.noiseFilter = this.ctx.createBiquadFilter();
+          this.noiseFilter.type = 'lowpass';
+          this.noiseFilter.frequency.setValueAtTime(180, t);
+          this.noiseGain = this.ctx.createGain();
+          this.noiseGain.gain.setValueAtTime(0, t);
+          this.noiseSource.connect(this.noiseFilter);
+          this.noiseFilter.connect(this.noiseGain);
+          this.noiseGain.connect(this.ctx.destination);
+          this.noiseSource.start();
+        }
+
         this.isRolling = true;
       }
 
-      if (this.rollGain && this.rollFilter && this.ctx) {
-        const normSpeed = Math.min(1, speed / 15);
-        const targetVol = normSpeed > 0.02 ? normSpeed * 0.12 : 0;
-        const targetFilter = 100 + normSpeed * 300;
+      const t = this.ctx.currentTime;
+      const normSpeed = Math.min(1, speed / 15);
+      const isMoving = normSpeed > 0.02;
 
-        this.rollGain.gain.setTargetAtTime(targetVol, this.ctx.currentTime, 0.08);
-        this.rollFilter.frequency.setTargetAtTime(targetFilter, this.ctx.currentTime, 0.08);
-        this.rollOsc.frequency.setTargetAtTime(35 + normSpeed * 40, this.ctx.currentTime, 0.08);
-      }
+      const targetVol = isMoving ? normSpeed * 0.22 : 0;
+      const targetNoiseVol = isMoving ? normSpeed * 0.04 : 0;
+      const targetFreq = 48 + normSpeed * 32;
+      const targetFilter = 130 + normSpeed * 120;
+
+      this.rollGain?.gain.setTargetAtTime(targetVol, t, 0.08);
+      this.rollOsc?.frequency.setTargetAtTime(targetFreq, t, 0.08);
+      this.rollFilter?.frequency.setTargetAtTime(targetFilter, t, 0.08);
+      this.noiseGain?.gain.setTargetAtTime(targetNoiseVol, t, 0.08);
     } catch {
       // Ignore
     }
@@ -305,8 +351,10 @@ class SoundEngine {
       clearInterval(this.musicInterval);
       this.musicInterval = null;
     }
-    if (this.rollGain && this.ctx) {
-      this.rollGain.gain.setValueAtTime(0, this.ctx.currentTime);
+    if (this.ctx) {
+      const t = this.ctx.currentTime;
+      if (this.rollGain) this.rollGain.gain.setValueAtTime(0, t);
+      if (this.noiseGain) this.noiseGain.gain.setValueAtTime(0, t);
     }
   }
 }
