@@ -1213,22 +1213,62 @@ export function createObjectMesh(defId: string): THREE.Group {
     }
     case 'palm_tree': {
       const trunkMat = getMaterial('#78350f');
-      const leafMat = getMaterial('#15803d');
-      // Trunk bottom touches y = 0
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.32, 3.2, 6), trunkMat);
-      trunk.position.set(0.3, 1.6, 0);
-      trunk.rotation.z = -0.15;
-      trunk.castShadow = true;
-      group.add(trunk);
-      for (let i = 0; i < 5; i++) {
-        const ang = (i / 5) * Math.PI * 2;
-        const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.4, 1.8, 4), leafMat);
-        leaf.position.set(Math.cos(ang) * 0.7 + 0.55, 3.3, Math.sin(ang) * 0.7);
-        leaf.rotation.x = Math.PI / 3;
-        leaf.rotation.y = ang;
+      const leafMat = getMaterial('#16a34a');
+      const leafDarkMat = getMaterial('#15803d');
+
+      // Flared trunk base
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, 0.4, 6), trunkMat);
+      base.position.set(0.02, 0.2, 0);
+      base.castShadow = true;
+      group.add(base);
+
+      // Slender, gently curved trunk
+      const lowerTrunk = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.22, 1.7, 6), trunkMat);
+      lowerTrunk.position.set(0.08, 1.15, 0);
+      lowerTrunk.rotation.z = -0.08;
+      lowerTrunk.castShadow = true;
+      group.add(lowerTrunk);
+
+      const upperTrunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.17, 1.8, 6), trunkMat);
+      upperTrunk.position.set(0.28, 2.8, 0);
+      upperTrunk.rotation.z = -0.16;
+      upperTrunk.castShadow = true;
+      group.add(upperTrunk);
+
+      // Crown position at top of curved trunk
+      const crown = new THREE.Group();
+      crown.position.set(0.44, 3.65, 0);
+      group.add(crown);
+
+      // Fronds: single triangular segment per frond, varied 3D angles
+      const frondConfigs = [
+        { yaw: 0.00, pitch: -1.85, roll:  0.08, len: 2.3, width: 0.36 },
+        { yaw: 0.78, pitch: -2.25, roll: -0.12, len: 2.1, width: 0.33 },
+        { yaw: 1.55, pitch: -1.72, roll:  0.15, len: 2.4, width: 0.37 },
+        { yaw: 2.32, pitch: -2.35, roll: -0.10, len: 2.0, width: 0.32 },
+        { yaw: 3.14, pitch: -1.80, roll:  0.12, len: 2.3, width: 0.35 },
+        { yaw: 3.92, pitch: -2.20, roll: -0.18, len: 2.1, width: 0.34 },
+        { yaw: 4.70, pitch: -1.75, roll:  0.05, len: 2.4, width: 0.36 },
+        { yaw: 5.48, pitch: -2.30, roll: -0.14, len: 2.0, width: 0.33 },
+      ];
+
+      frondConfigs.forEach((cfg, idx) => {
+        const frond = new THREE.Group();
+        frond.rotation.y = cfg.yaw;
+
+        const leafGeom = new THREE.ConeGeometry(cfg.width, cfg.len, 4);
+        leafGeom.scale(0.22, 1.0, 1.0); // flat blade with central ridge
+        leafGeom.translate(0, cfg.len / 2, 0); // pivot at base
+
+        const mat = idx % 2 === 1 ? leafMat : leafDarkMat;
+        const leaf = new THREE.Mesh(leafGeom, mat);
+        leaf.rotation.z = cfg.pitch; // droop angle
+        leaf.rotation.x = cfg.roll;  // non-coplanar tilt
         leaf.castShadow = true;
-        group.add(leaf);
-      }
+        frond.add(leaf);
+
+        crown.add(frond);
+      });
       break;
     }
     case 'fishing_boat': {
